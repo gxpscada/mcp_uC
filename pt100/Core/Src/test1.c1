@@ -1,0 +1,41 @@
+#include "main.h"
+#include "max31865.h"
+
+extern SPI_HandleTypeDef hspi1;
+volatile uint8_t data_ready_flag = 0;
+
+// Sensor specifications
+#define R0    100.0f    // 100 Ohms for PT100 (use 1000.0f for PT1000)
+#define RREF  430.0f    // Reference resistor value on your breakout board
+
+int main(void) {
+    HAL_Init();
+    SystemClock_Config();
+    MX_GPIO_Init();
+    MX_SPI1_Init();
+
+    // Initialize MAX31865 in continuous mode
+    MAX31865_Init(&hspi1, GPIOA, GPIO_PIN_4);
+
+    float temperature = 0.0f;
+
+    while (1) {
+        // Check if DRDY pin asserted the falling edge interrupt flag
+        if (data_ready_flag) {
+            data_ready_flag = 0; // Clear software flag
+
+            // Read data (This automatically pulls the DRDY pin back HIGH)
+            uint16_t raw = MAX31865_ReadRawRTD();
+            temperature = MAX31865_CalculateTemp(raw, R0, RREF);
+
+            // Optional: Print or process 'temperature' variable here
+        }
+    }
+}
+
+// EXTI Call back for DRDY Pin (PB0)
+void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin) {
+    if (GPIO_Pin == GPIO_PIN_0) {
+        data_ready_flag = 1; // Signal main loop that conversion is ready
+    }
+}

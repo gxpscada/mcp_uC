@@ -1,0 +1,127 @@
+#define USE_CALLENDAR_VAN_DUSEN 1
+#define USE_CALIBRATION 1
+#define USE_PT1000
+
+#include "max31865.h"
+#include "stdbool.h"
+#include <math.h>
+
+static SPI_HandleTypeDef *max31865_hspi;
+static GPIO_TypeDef *max31865_cs_port;
+static uint16_t max31865_cs_pin;
+static uint16_t max31865_drdy_pin;
+
+//+
+static void MAX31865_CSelect(bool sel) {
+	if (sel){
+		HAL_GPIO_WritePin(max31865_cs_port, max31865_cs_pin, GPIO_PIN_RESET);
+
+	}else{
+		HAL_GPIO_WritePin(max31865_cs_port, max31865_cs_pin, GPIO_PIN_SET);
+	}
+}
+
+//+
+static void MAX31865_WriteRegister(uint8_t reg, uint8_t value) {
+    uint8_t data[2] = { reg | 0x80, value };
+    MAX31865_CSelect(true);
+    HAL_SPI_Transmit(max31865_hspi, data, 2, HAL_MAX_DELAY);
+    MAX31865_CSelect(false);
+}
+
+//+
+static uint8_t MAX31865_ReadRegister(uint8_t reg) {
+    uint8_t tx[2] = { reg & 0x7F, 0x00 };
+    uint8_t rx[2] = { 0, 0 };
+    MAX31865_CSelect(true);
+    HAL_SPI_TransmitReceive(max31865_hspi, tx, rx, 2, HAL_MAX_DELAY);
+    MAX31865_CSelect(false);
+    return rx[1];
+}
+
+//+
+void MAX31865_Init(SPI_HandleTypeDef *hspi, GPIO_TypeDef *cs_port, uint16_t cs_pin, uint16_t drdy_pin) {
+    max31865_hspi = hspi;
+    max31865_cs_port = cs_port;
+    max31865_cs_pin = cs_pin;
+    max31865_drdy_pin = drdy_pin;
+
+    // Configuration for 4-wire PT100: VBIAS enabled, Auto conversion, 50Hz filter
+//    uint8_t config = CFG_CONV_AUTO | CFG_4WIRE | CFG_FILTER_50HZ;
+//    uint8_t config = CFG_VBIAS_ON | CFG_CONV_AUTO | CFG_4WIRE | CFG_FILTER_50HZ;
+//    MAX31865_WriteRegister(MAX31865_REG_CONFIG, config);
+
+    uint8_t config = CFG_VBIAS_ON | CFG_CONV_AUTO | CFG_4WIRE | CFG_FILTER_50HZ;
+//    uint8_t config = CFG_VBIAS_ON | CFG_CONV_AUTO | CFG_4WIRE | CFG_FILTER_50HZ;
+    MAX31865_WriteRegister(MAX31865_REG_CONFIG, config);
+    HAL_Delay(1);
+//    volatile uint8_t CFG = MAX31865_ReadRegister(MAX31865_REG_CONFIG);
+//    CFG++;
+}
+
+//+
+
+uint16_t MAX31865_ReadRawRTD(void) {
+    uint8_t txBuf[3] = { MAX31865_REG_RTD_MSB, 0xFF, 0xFF };
+    uint8_t rxBuf[3] = { 0 };
+
+    MAX31865_CSelect(true);
+    HAL_SPI_TransmitReceive(max31865_hspi, txBuf, rxBuf, 3, HAL_MAX_DELAY);
+    MAX31865_CSelect(false);
+
+    // Объединяем MSB и LSB (15 бит сырых данных)
+    uint16_t rtd = ((uint16_t)rxBuf[1] << 8) | rxBuf[2];
+
+    return (rtd >> 1); // Сдвигаем вправо на 1 бит, чтобы получить 15-битный результат ADC
+}
+
+
+//+
+float MAX31865_CalculateTemp(uint16_t raw_rtd) {
+    float resistance = ((float)raw_rtd * MAX31865_RREF) / MAX31865_maxVal;
+    float T =0;
+
+    // Callendar-VanDusen or Linear
+    if (USE_CALLENDAR_VAN_DUSEN){
+    	T = Calculate_Temperature_CallendarVanDusen(resistance);
+    } else {
+    	T = (resistance - MAX31865_R0) / (MAX31865_R0 * Pt_alpha);
+    };
+
+    // Calibration Correction
+    if (USE_CALIBRATION){
+    	return MAX31865_correctTemp(T);
+    } else {
+    	return T;
+    }
+}
+
+//+
+float MAX31865_correctTemp(float T){
+	return (correctionK*T + correctionB);
+}
+
+//
+float Calculate_Temperature_CallendarVanDusen(float R_measured) {
+
+	// 1. Точный расчёт для T >= 0 °C по квадратному уравнению
+	float discriminant = (RTD_A * RTD_A) - (4.0f * RTD_B * (1.0f - (R_measured / MAX31865_R0)));
+	float temp = (-RTD_A + sqrtf(discriminant)) / (2.0f * RTD_B);
+	// Если полученная температура >= 0 °C, возвращаем результат
+	if (temp >= 0.0f) { return temp; }
+	// 2. Уточнение итерационным методом Ньютона-Рафсона для T < 0 °C
+	// Выполняем 3 итерации для достижения высокой точности
+	for (int i = 0; i < 3; i++) {
+		float t2 = temp * temp; float t3 = t2 * temp;
+		// Значение функции f(T) = R(T) — R_measured
+
+
+		float f = MAX31865_R0 * (1.0f + RTD_A * temp + RTD_B * t2 + RTD_C * (temp - 100.0f) * t3) - R_measured;
+//		float f = MAX31865_R0 * (1.0f + RTD_A * temp + RTD_B * t2 + RTD_C * (temp - 100.0f) * t3) — R_measured;
+		// Производная f'(T) = dR/dT
+		float df = MAX31865_R0 * (RTD_A + 2.0f * RTD_B * temp + RTD_C * (4.0f * t3 - 300.0f * t2));
+		// Шаг Ньютона: T_new = T — f(T)/f'(T)
+		temp = temp - (f / df);
+	}
+	return temp;
+}
