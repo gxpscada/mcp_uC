@@ -3,9 +3,8 @@ build-f411/
 build-f407/
 build-f411-*ch/
 build-f407-*ch/
-# Local compiler, binaries, measurement logs and generated documentation.
-/service/local/
-/service/tests/build/
+# Service files are kept locally and are not versioned.
+/service/
 __pycache__/
 *.pyc
 # STM32CubeIDE regenerates these in the project root.
