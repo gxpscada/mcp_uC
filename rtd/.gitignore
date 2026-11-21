@@ -10,3 +10,39 @@ __pycache__/
 # STM32CubeIDE regenerates these in the project root.
 /Debug/
 /Release/
+
+# Other IDEs and local service material; CubeIDE files remain tracked.
+/MDK-ARM/
+.metadata/
+.vscode/
+.idea/
+
+# Generated CubeIDE index and debugger view state.
+/.settings/language.settings.xml
+/.settings/com.st.stm32cube.ide.mcu.sfrview.prefs
+
+# Build products (including accidental outputs outside Debug/Release).
+*.o
+*.d
+*.su
+*.elf
+*.axf
+*.hex
+*.bin
+*.map
+*.lst
+*.list
+*.cyclo
+*.dep
+*.log
+*.build_log.htm
+
+# Local archives and editor backups.
+*.zip
+*.7z
+*.rar
+*.tar
+*.gz
+*.bak
+*.tmp
+*~
