@@ -16,6 +16,7 @@ typedef struct {
 } device_stm32_channel_t; // Имя типа аппаратного дескриптора канала
 
 int device_stm32_transfer(void *, const uint8_t *, uint8_t *, size_t); // Прототип адаптера синхронного обмена по SPI с управлением пином CS
+void device_stm32_drdy_reset(void);
 int device_stm32_ready(void *); // Прототип адаптера чтения активного низкого уровня готовности на пине DRDY
 uint32_t device_stm32_ticks(void *); // Прототип адаптера чтения 32-битного счётчика тактов ядра DWT->CYCCNT
 void device_app_init(SPI_HandleTypeDef *); // Прототип главной функции инициализации прикладного уровня прошивки

@@ -61,14 +61,17 @@ int device_store_load(device_store_t *s, device_config_t *out)
 
         // Отбрасываем запись, если не совпала сигнатура, версия формата (1), маркер фиксации COMMIT
         // или контрольная сумма CRC
-        if (r[0] != STORE_MAGIC || r[1] != 1 || r[18] != STORE_COMMIT || r[17] != checksum(r)) continue;
+        if (r[0] != STORE_MAGIC || ((r[1] & 0xFFFFu) != 1 && (r[1] & 0xFFFFu) != 2) || r[18] != STORE_COMMIT || r[17] != checksum(r)) continue;
 
         // Заполняем временную структуру базовыми значениями (чтобы инициализировать константы R0)
         device_config_defaults(&c);
         // Извлекаем 16-битные Holding-регистры, упакованные по два в словах r[2]..r[16]
-        for (i = 0; i < DEVICE_HOLDING_COUNT; ++i)
+        for (i = 0; i < HR_CHANNEL_MASK; ++i)
             // Чётные регистры берутся из младших 16 бит слова, нечётные — из старших 16 бит
             map[i] = (uint16_t)(r[2 + i / 2] >> (16u * (i % 2)));
+
+        map[HR_CHANNEL_MASK] = (r[1] & 0xFFFFu) == 1 ?
+            (map[HR_CHANNELS] <= DEVICE_BOARD_CHANNEL_COUNT ? (uint16_t)((1u << map[HR_CHANNELS]) - 1u) : 0) : (uint16_t)(r[1] >> 16);
 
         // В старших 16 битах 16-го слова хранятся битовые флаги режимов обработки
         flags = (uint16_t)(r[16] >> 16);
@@ -120,9 +123,9 @@ int device_store_save(device_store_t *s, const device_config_t *c)
 
     memset(s->record, 0, sizeof(s->record)); // Очищаем буфер подготовки записи в ОЗУ
     s->record[0] = STORE_MAGIC; // Слово 0: записываем сигнатуру заголовка 'PTC2'
-    s->record[1] = 1; // Слово 1: записываем версию структуры журнала (1)
+    s->record[1] = 2u | (c->channel_mask << 16); // Версия 2 и маска каналов; размер слота и расположение CRC сохранены.
     // Упаковываем массив 16-битных регистров по два в 32-битные слова с индексами 2..16
-    for (i = 0; i < DEVICE_HOLDING_COUNT; ++i)
+    for (i = 0; i < HR_CHANNEL_MASK; ++i)
         // Чётный регистр ложится в младшее полуслово, нечётный — в старшее
         s->record[2 + i / 2] |= (uint32_t)map[i] << (16u * (i % 2));
     // В свободную старшую половину слова 16 помещаем битовую маску флагов Coils

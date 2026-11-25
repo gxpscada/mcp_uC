@@ -8,14 +8,14 @@
 #ifndef DEVICE_BOARD_CHANNELS // Если таблица распиновки каналов не переопределена извне
 // Макрос инициализации массива из 8 структур привязки каналов T0..T7: {дескриптор SPI, порт CS, порт DRDY, пин CS, пин DRDY, таймаут SPI в мс}
 #define DEVICE_BOARD_CHANNELS(spi_handle) { \
-    {spi_handle, GPIOA, GPIOA, GPIO_PIN_3, GPIO_PIN_2, 2},   /* Канал T0: CS = PA3,  DRDY = PA2,  таймаут SPI = 2 мс */ \
-    {spi_handle, GPIOB, GPIOB, GPIO_PIN_0, GPIO_PIN_12, 2},  /* Канал T1: CS = PB0,  DRDY = PB12, таймаут SPI = 2 мс */ \
-    {spi_handle, GPIOB, GPIOB, GPIO_PIN_1, GPIO_PIN_13, 2},  /* Канал T2: CS = PB1,  DRDY = PB13, таймаут SPI = 2 мс */ \
-    {spi_handle, GPIOB, GPIOB, GPIO_PIN_10, GPIO_PIN_14, 2}, /* Канал T3: CS = PB10, DRDY = PB14, таймаут SPI = 2 мс */ \
-    {spi_handle, GPIOB, GPIOB, GPIO_PIN_2, GPIO_PIN_15, 2},  /* Канал T4: CS = PB2,  DRDY = PB15, таймаут SPI = 2 мс */ \
-    {spi_handle, GPIOB, GPIOA, GPIO_PIN_11, GPIO_PIN_8, 2},  /* Канал T5: CS = PB11, DRDY = PA8,  таймаут SPI = 2 мс */ \
-    {spi_handle, GPIOA, GPIOA, GPIO_PIN_0, GPIO_PIN_9, 2},   /* Канал T6: CS = PA0,  DRDY = PA9,  таймаут SPI = 2 мс */ \
-    {spi_handle, GPIOA, GPIOA, GPIO_PIN_1, GPIO_PIN_10, 2} } /* Канал T7: CS = PA1,  DRDY = PA10, таймаут SPI = 2 мс */
+    {spi_handle, GPIOA, GPIOB, GPIO_PIN_3, GPIO_PIN_10, 2}, /* T0: CS=PA3, DRDY=PB10 */ \
+    {spi_handle, GPIOB, GPIOB, GPIO_PIN_0, GPIO_PIN_12, 2}, /* T1: CS=PB0, DRDY=PB12 */ \
+    {spi_handle, GPIOB, GPIOB, GPIO_PIN_1, GPIO_PIN_15, 2}, /* T2: CS=PB1, DRDY=PB15 */ \
+    {spi_handle, GPIOA, GPIOA, GPIO_PIN_2, GPIO_PIN_8, 2}, /* T3: CS=PA2, DRDY=PA8 */ \
+    {spi_handle, GPIOB, GPIOB, GPIO_PIN_2, GPIO_PIN_4, 2}, /* T4: CS=PB2, DRDY=PB4 */ \
+    {spi_handle, GPIOB, GPIOB, GPIO_PIN_11, GPIO_PIN_5, 2}, /* T5: CS=PB11, DRDY=PB5 */ \
+    {spi_handle, GPIOA, GPIOA, GPIO_PIN_0, GPIO_PIN_9, 2}, /* T6: CS=PA0, DRDY=PA9 */ \
+    {spi_handle, GPIOA, GPIOB, GPIO_PIN_1, GPIO_PIN_6, 2} } /* T7: CS=PA1, DRDY=PB6 */
 #endif // Конец определения таблицы каналов
 
 #ifndef DEVICE_BOARD_GPIO_CLOCK_ENABLE // Если макрос включения тактирования портов датчиков не задан извне

@@ -29,6 +29,7 @@ typedef struct {
 typedef struct {
     device_trigger_t trigger; // Выбранный режим синхронизации (DEVICE_WAIT_ALL или DEVICE_TRIGGER_FIRST)
     uint32_t timeout_ms; // Предельное время ожидания сигналов DRDY в мс, после которого кадр собирается принудительно
+    uint8_t channel_mask; // Нулевое значение оставлено для старых вызывающих: все каналы до channel_count.
     uint8_t channel_count; // Количество активных каналов (от 1 до DEVICE_MAX_CHANNELS), участвующих в опросе
 } device_settings_t; // Имя типа структуры настроек сборщика
 

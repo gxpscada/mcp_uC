@@ -9,6 +9,7 @@
 #define MB_RX_SIZE 1024u // Размер приёмного кольцевого буфера в байтах (обязательно степень двойки для быстрого наложения битовой маски)
 #define MB_POLL_BUDGET 256u // Максимальное количество символов, разбираемых из кольцевого буфера за один вызов функции poll в главном цикле
 #define MB_CHARACTER_TIMEOUT_MS 1000u // Максимально допустимая пауза между символами одного кадра по стандарту Modbus ASCII (1 секунда = 1000 мс)
+#define MB_STREAM_COIL 9u // FC05: взвести повтор следующего чтения; 0 — отменить.
 #define MB_COIL_ON 0xff00u // Константа включения одиночного флага Coil для функции 0x05 по стандарту Modbus (выключение передаётся как 0x0000)
 #define MB_EXCEPTION_FLAG 0x80u // Битовая маска, добавляемая к коду функции (FC | 0x80) при формировании ответа об исключении (ошибке)
 #define MB_ADDRESS_SPACE 65536u // Полная ёмкость 16-битного адресного пространства регистров Modbus (0..65535)
@@ -55,6 +56,9 @@ typedef struct {
     uint8_t response[MB_ASCII_MAX]; // Буфер сформированного текстового ASCII-ответа, ожидающего отправки в USB
     uint16_t request_length; // Текущее количество собранных байтов в буфере request
     uint16_t response_length; // Длина готового к отправке ответа в байтах (0 — если нет неотправленного ответа)
+    uint8_t stream_armed, stream_active, response_is_stream;
+    uint8_t stream_request[6];
+    uint32_t stream_dropped; // Новые кадры, пропущенные из-за занятого транспорта.
     uint8_t address; // Собственный сетевой адрес устройства Modbus (1..247)
     uint8_t collecting; // Флаг состояния парсера: 1 — встречен стартовый символ ':', идёт сборка кадра
     uint8_t half_byte; // Флаг сборки байта: 1 — принята старшая HEX-тетрада, ожидается младшая тетрада
@@ -75,6 +79,7 @@ size_t modbus_ascii_encode(const uint8_t *, size_t, uint8_t *, size_t); // Пр�
 void modbus_ascii_init(modbus_ascii_t *, uint8_t, void *, mb_read_fn, mb_write_fn); // Прототип функции инициализации контекста Modbus ASCII
 void modbus_ascii_receive(modbus_ascii_t *, const uint8_t *, size_t, uint32_t); // Прототип функции приёма байтов из прерывания USB в кольцевой буфер
 void modbus_ascii_disconnect(modbus_ascii_t *); // Прототип функции уведомления о разрыве связи USB
+void modbus_ascii_measurement(modbus_ascii_t *);
 void modbus_ascii_poll(modbus_ascii_t *, uint32_t, void *, int (*send)(void *, const uint8_t *, size_t)); // Прототип фонового автомата разбора запросов и отправки ответов
 
 #endif

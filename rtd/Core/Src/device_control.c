@@ -12,9 +12,10 @@ void device_control_invalidate(device_control_t *c, uint8_t status)
     // Обнуляем структуру рассчитанных float-значений температуры и сопротивления
     memset(c->processed, 0, sizeof(c->processed));
     for (i = 0; i < DEVICE_MAX_CHANNELS; ++i) { // Проходим по всем возможным каналам карты регистров
-        // Записываем программный код статуса в старший байт регистра состояния канала (младший байт
-        // ошибок чипа = 0)
-        c->inputs[IR_STATUS + i] = (uint16_t)((unsigned)status << 8);
+        // Аппаратные ошибки и программные статусы хранятся раздельно.
+        c->inputs[IR_STATUS + i] = 0;
+        c->inputs[IR_SOFTWARE_STATUS + i] = (c->config.channel_mask & (1u << i)) ? status : DEVICE_STOPPED;
+        c->inputs[IR_ADC_Q1 + i] = REGISTER_INVALID_ADC;
         // Записываем в целочисленный регистр температуры спецкод недостоверного значения (-32768 /
         // 0x8000)
         c->inputs[IR_TEMPERATURE + i] = REGISTER_INVALID_T;
@@ -64,7 +65,7 @@ void device_control_frame(device_control_t *c, const device_frame_t *f)
 
         // Все каналы за пределами выбранного числа активных принудительно помечаем как
         // остановленные
-        if (i >= c->config.active_channels) status = DEVICE_STOPPED;
+        if (!(c->config.channel_mask & (1u << i))) status = DEVICE_STOPPED;
         // По умолчанию до успешного расчёта выставляем в регистре температуры маркер ошибки
         c->inputs[IR_TEMPERATURE + i] = REGISTER_INVALID_T;
         // Если ошибок сбора нет, публикуем чистый 15-битный код АЦП, иначе 0xFFFF
@@ -109,9 +110,10 @@ void device_control_frame(device_control_t *c, const device_frame_t *f)
                 c->inputs[IR_TEMPERATURE + i] = (uint16_t)t;
             }
         }
-        // Формируем слово статуса канала: старший байт — программный статус, младший — аппаратный
-        // байт ошибок MAX31865
-        c->inputs[IR_STATUS + i] = (uint16_t)(((unsigned)status << 8) | d->sample.faults | d->sample.sensor_fault);
+        // В Fault Status оставляем только определённые биты D7..D2 микросхемы.
+        c->inputs[IR_STATUS + i] = status == DEVICE_STOPPED ? 0 : (uint16_t)(d->sample.faults & 0xFCu);
+        c->inputs[IR_SOFTWARE_STATUS + i] = status;
+        c->inputs[IR_ADC_Q1 + i] = p->valid ? (uint16_t)p->adc_q1 : REGISTER_INVALID_ADC;
     }
 }
 
@@ -134,7 +136,7 @@ static int flag_error(const device_control_t *c)
     for (i = 0; i < c->config.active_channels; ++i)
         // Если в любом активном канале присутствует бит фатальной ошибки, поднимаем общий флаг
         // аварии
-        if ((c->inputs[IR_STATUS + i] >> 8) & (DEVICE_NOT_READY | DEVICE_BUS_ERROR | DEVICE_SENSOR_FAULT | DEVICE_INIT_ERROR | DEVICE_RANGE_ERROR)) return 1;
+        if ((c->inputs[IR_SOFTWARE_STATUS + i]) & (DEVICE_NOT_READY | DEVICE_BUS_ERROR | DEVICE_SENSOR_FAULT | DEVICE_INIT_ERROR | DEVICE_RANGE_ERROR)) return 1;
     return 0; // Все активные каналы и подсистемы работают штатно
 }
 
@@ -203,7 +205,7 @@ int device_control_read(void *ctx, unsigned space, uint16_t addr, uint16_t count
             // Отдаём значение напрямую из синхронизированного массива Holding-регистров
             out[i] = c->holding[a];
         // Если читается расширенная область 32-битных чисел с плавающей точкой (IEEE 754)
-        } else if (a >= IR_TEMPERATURE_FLOAT) {
+        } else if (a >= IR_TEMPERATURE_FLOAT && a < IR_FLOAT_END) {
             // Определяем базовый адрес блока (температура или сопротивление)
             unsigned base = a < IR_RESISTANCE_FLOAT ? IR_TEMPERATURE_FLOAT : IR_RESISTANCE_FLOAT;
             // Находим структуру канала (каждое float-значение занимает 2 смежных 16-битных
@@ -266,13 +268,14 @@ int device_write_holding(device_control_t *c, uint16_t addr, uint16_t count, con
         register_updateFromModbus(&next, map, a);
     }
 
+    map[HR_CHANNEL_MASK] = (uint16_t)next.channel_mask;
     // Выполняем комплексную проверку целостности всей итоговой конфигурации
     if (!device_config_valid(&next)) return error(c, MB_ILLEGAL_VALUE);
     // Запрещаем менять число активных опрашиваемых каналов на лету без остановки измерений
-    if (c->run_requested && next.active_channels != c->config.active_channels) return MB_DEVICE_BUSY;
+    if (c->run_requested && (next.active_channels != c->config.active_channels || next.channel_mask != c->config.channel_mask)) return MB_DEVICE_BUSY;
     // Если изменился любой настроечный регистр кроме регистров подстановки времени RTC, сбрасываем
     // историю фильтров
-    if (memcmp(map, c->holding, HR_RTC_LO * sizeof(map[0]))) changed(c);
+    if (memcmp(map, c->holding, HR_RTC_LO * sizeof(map[0])) || next.channel_mask != c->config.channel_mask) changed(c);
     c->config = next; // Атомарно применяем проверенную конфигурацию как рабочую
     memcpy(c->holding, map, sizeof(map)); // Обновляем основной массив Holding-регистров
     return 0; // Запись Holding-регистров успешно выполнена

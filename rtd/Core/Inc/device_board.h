@@ -9,7 +9,7 @@
 #endif // Конец блока определения числа физических каналов
 
 #define DEVICE_HW_REVISION 1u // Код аппаратной ревизии печатной платы (доступен для чтения по Modbus в регистре IR_HW)
-#define DEVICE_SW_REVISION 0x0030u // Версия встроенного программного обеспечения в формате 0xMMmm (версия 0.3, регистр IR_SW)
+#define DEVICE_SW_REVISION 0x0031u // Версия встроенного программного обеспечения в формате 0xMMmm (версия 0.3, регистр IR_SW)
 
 #if DEVICE_BOARD_CHANNEL_COUNT < 1 || DEVICE_BOARD_CHANNEL_COUNT > DEVICE_MAX_CHANNELS // Проверка препроцессором корректности числа физических каналов
 #error Invalid_physical_channel_count // Остановка компиляции, если число физических каналов меньше 1 или больше 8

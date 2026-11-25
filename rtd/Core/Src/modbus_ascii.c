@@ -129,7 +129,7 @@ void modbus_ascii_disconnect(modbus_ascii_t *m)
 }
 
 // Разбор и выполнение проверенного двоичного запроса PDU и формирование ответного кадра
-static void execute(modbus_ascii_t *m)
+static void execute(modbus_ascii_t *m, int replay)
 {
     // Указатель на буфер принятого двоичного запроса (q[0] — адрес, q[1] — код функции)
     const uint8_t *q = m->request;
@@ -143,8 +143,14 @@ static void execute(modbus_ascii_t *m)
     unsigned space; // Идентификатор целевого адресного пространства (Coils, Discrete, Holding, Input)
     size_t n = 0; // Итоговая длина сформированного двоичного ответа в байтах
     int error = 0; // Код исключения Modbus (0 — нет ошибки)
+    uint8_t armed = m->stream_armed;
     int broadcast = q[0] == 0; // Признак широковещательного запроса (адрес 0x00)
 
+    if (!replay) {
+        m->stream_armed = 0;
+        m->stream_active = 0;
+        m->response_is_stream = 0;
+    }
     // Если пакет адресован другому устройству и не является широковещательным, молча игнорируем его
     if (q[0] != m->address && !broadcast) return;
     // Все стандартные команды этого профиля имеют длину минимум 6 байт (Адрес + FC + 2 байта адреса
@@ -156,7 +162,7 @@ static void execute(modbus_ascii_t *m)
     }
     r[0] = q[0]; // Копируем адрес устройства в заголовок ответа
     r[1] = fc; // Копируем код функции в заголовок ответа
-    ++m->requests; // Увеличиваем диагностический счётчик принятых запросов к нашему адресу
+    if (!replay) ++m->requests; // Увеличиваем диагностический счётчик принятых запросов к нашему адресу
 
     switch (fc) { // Выбираем логику обработки по коду функции Modbus
     case MB_FC_READ_COILS: // 0x01: Чтение флагов Coils
@@ -214,7 +220,11 @@ static void execute(modbus_ascii_t *m)
             // Преобразуем 0xFF00 в 1 для Coil, либо оставляем 16-битное число как есть для регистра
             values[0] = fc == MB_FC_WRITE_COIL ? (uint16_t)(count == MB_COIL_ON) : count;
             // Вызываем обработчик записи карты для 1 элемента
-            error = m->write(m->context, fc == MB_FC_WRITE_COIL ? MB_COILS : MB_HOLDING, address, 1, values);
+            if (fc == MB_FC_WRITE_COIL && address == MB_STREAM_COIL) {
+                m->stream_armed = (uint8_t)(!broadcast && values[0]);
+            } else {
+                error = m->write(m->context, fc == MB_FC_WRITE_COIL ? MB_COILS : MB_HOLDING, address, 1, values);
+            }
             // При успешной записи ответ для функций 0x05 и 0x06 представляет собой полное эхо
             // запроса
             if (!error) {
@@ -269,6 +279,11 @@ static void execute(modbus_ascii_t *m)
         n = 3; // Длина пакета исключения фиксирована и равна 3 байтам (Адрес, FC|0x80, Код ошибки)
         ++m->exceptions; // Увеличиваем диагностический счётчик сформированных исключений
     }
+    if (!error && !replay && armed && fc >= 1 && fc <= 4) {
+        memcpy(m->stream_request, q, 6);
+        m->stream_active = 1;
+    }
+    if (error && replay) m->stream_active = 0;
     // Кодируем готовый двоичный ответ в формат Modbus ASCII с расчётом LRC
     m->response_length = (uint16_t)modbus_ascii_encode(r, n, m->response, sizeof(m->response));
 }
@@ -301,6 +316,7 @@ void modbus_ascii_poll(modbus_ascii_t *m, uint32_t ms, void *txctx, int (*send)(
 
     // Если из прерывания USB был запрошен сброс (переполнение буфера или отключение кабеля)
     if (m->reset_requested) {
+        m->stream_active = m->stream_armed = m->response_is_stream = 0;
         m->reset_requested = 0; // Снимаем флаг запроса сброса
         m->tail = m->head; // Мгновенно опустошаем кольцевой буфер приёма, приравнивая хвост к голове
         reset_frame(m); // Сбрасываем состояние парсера текущего кадра
@@ -309,6 +325,11 @@ void modbus_ascii_poll(modbus_ascii_t *m, uint32_t ms, void *txctx, int (*send)(
 
     // Если в буфере передачи лежит готовый ответ, который в прошлый раз не смог уйти из-за
     // занятости USB
+    // Не задерживаем новую команду неотправленным повторным ответом.
+    if (m->response_is_stream && m->tail != m->head) {
+        m->response_length = 0;
+        m->response_is_stream = 0;
+    }
     if (m->response_length) {
         // Пытаемся снова передать ответ в USB; при успехе (код 0) очищаем длину ответа
         if (!send(txctx, m->response, m->response_length)) m->response_length = 0;
@@ -351,7 +372,7 @@ void modbus_ascii_poll(modbus_ascii_t *m, uint32_t ms, void *txctx, int (*send)(
                 if (!modbus_lrc(m->request, m->request_length)) {
                     // Уменьшаем длину на 1 байт, отрезая проверенный байт LRC от полезного PDU
                     --m->request_length;
-                    execute(m); // Запускаем выполнение команды Modbus и формирование ответа
+                    execute(m, 0); // Запускаем выполнение команды Modbus и формирование ответа
                 } else { // Если сумма LRC не сошлась
                     ++m->lrc_errors; // Увеличиваем диагностический счётчик ошибок контрольной суммы
                 }
@@ -399,4 +420,19 @@ void modbus_ascii_poll(modbus_ascii_t *m, uint32_t ms, void *txctx, int (*send)(
             m->half_byte = 0; // Сбрасываем флаг полубайта (готовы к приёму следующего байта или '\r')
         }
     }
+}
+
+// Вызывается после публикации нового измерительного кадра, не из IRQ.
+void modbus_ascii_measurement(modbus_ascii_t *m)
+{
+    if (!m->stream_active || m->reset_requested) return;
+    if (m->response_length || m->collecting || m->tail != m->head) {
+        ++m->stream_dropped;
+        return;
+    }
+    memcpy(m->request, m->stream_request, 6);
+    m->request_length = 6;
+    execute(m, 1);
+    reset_frame(m);
+    m->response_is_stream = 1;
 }

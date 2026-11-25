@@ -24,6 +24,7 @@ void device_config_defaults(device_config_t *c)
     memset(c, 0, sizeof(*c));
     // Устанавливаем число активных опрашиваемых каналов по умолчанию
     c->active_channels = DEVICE_DEFAULT_CHANNELS;
+    c->channel_mask = (1u << c->active_channels) - 1u;
     c->average_window = DEVICE_DEFAULT_AVERAGE; // Устанавливаем длину окна скользящего среднего по умолчанию
     c->median_window = DEVICE_DEFAULT_MEDIAN; // Устанавливаем длину окна медианного фильтра по умолчанию
     c->use_median = DEVICE_DEFAULT_USE_MEDIAN; // Флаг включения медианы по умолчанию
@@ -52,6 +53,7 @@ int register_validateAndSet(uint16_t *map, uint16_t a, uint16_t v)
     if (a == HR_AVERAGE && v != 2 && v != 4 && v != 8 && v != 16) return MB_ILLEGAL_VALUE;
     // Окно медианы принимает только нечётные значения 3, 5 или 7
     if (a == HR_MEDIAN && v != 3 && v != 5 && v != 7) return MB_ILLEGAL_VALUE;
+    if (a == HR_CHANNEL_MASK && (!v || v >= (1u << DEVICE_BOARD_CHANNEL_COUNT))) return MB_ILLEGAL_VALUE;
     map[a] = v; // Все проверки пройдены: сохраняем 16-битное слово в массив Holding-регистров
     return 0; // Возвращаем 0 (успех)
 }
@@ -73,7 +75,8 @@ void register_updateFromModbus(device_config_t *c, const uint16_t *map, uint16_t
         c->gain[a - HR_GAIN] = v / REGISTER_GAIN_SCALE;
     } else { // Обработка одиночных общих регистров конфигурации
         switch (a) {
-        case HR_CHANNELS: c->active_channels = v; break; // Обновляем количество активных опрашиваемых каналов
+        case HR_CHANNELS: c->active_channels = v; c->channel_mask = (1u << v) - 1u; break;
+        case HR_CHANNEL_MASK: c->channel_mask = v; break; // Обновляем количество активных опрашиваемых каналов
         case HR_AVERAGE: c->average_window = v; break; // Обновляем размер окна скользящего среднего
         case HR_MEDIAN: c->median_window = v; break; // Обновляем размер окна медианного фильтра
         case HR_RTC_LO: // Если изменилось младшее слово буфера установки времени RTC
@@ -115,6 +118,7 @@ int register_set2modbus(const device_config_t *c, uint16_t *map, uint16_t a)
         switch (a) {
         // Число активных каналов передаётся один к одному
         case HR_CHANNELS: scaled = c->active_channels; break;
+        case HR_CHANNEL_MASK: scaled = c->channel_mask; break;
         // Размер окна усреднения передаётся как целое число
         case HR_AVERAGE: scaled = c->average_window; break;
         case HR_MEDIAN: scaled = c->median_window; break; // Размер окна медианы передаётся как целое число
@@ -180,6 +184,8 @@ int device_config_valid(const device_config_t *c)
     uint16_t map[DEVICE_HOLDING_COUNT]; // Временный буфер для тестового кодирования в Holding-регистры
     unsigned i; // Счётчик каналов
     // Булевы флаги режимов должны содержать строго 0 или 1
+    if (!c->active_channels || c->active_channels > DEVICE_BOARD_CHANNEL_COUNT ||
+        !c->channel_mask || c->channel_mask >= (1u << c->active_channels)) return 0;
     if (c->use_median > 1 || c->use_average > 1 || c->use_calibration > 1) return 0;
     for (i = 0; i < DEVICE_MAX_CHANNELS; ++i) // Проверяем номинальные сопротивления R0 всех каналов
         // Если R0 содержит NaN/Inf или меньше/равно 0, конфигурация повреждена

@@ -25,6 +25,7 @@ _Static_assert(DEVICE_DEFAULT_CHANNELS >= 1 && DEVICE_DEFAULT_CHANNELS <= DEVICE
 // Структура рабочей конфигурации прибора в физических единицах (используется в расчётах и сохраняется во Flash)
 typedef struct {
     uint32_t active_channels; // Текущее количество опрашиваемых активных каналов (от 1 до DEVICE_BOARD_CHANNEL_COUNT)
+    uint32_t channel_mask; // Бит i разрешает опрос канала i; HR_CHANNELS задаёт верхнюю границу.
     float r0[DEVICE_MAX_CHANNELS]; // Номинальные сопротивления датчиков при 0 °C для каждого канала в Омах (например, 1000.0 Ом для Pt1000)
     float rref[DEVICE_MAX_CHANNELS]; // Фактические сопротивления опорных резисторов Rref для каждого канала в Омах
     int32_t adc_offset[DEVICE_MAX_CHANNELS]; // Индивидуальные знаковые калибровочные поправки нуля АЦП (коэффициент b) в отсчётах 15-битного АЦП

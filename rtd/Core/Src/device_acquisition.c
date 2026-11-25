@@ -9,6 +9,7 @@ int device_acquisition_poll(device_acquisition_t *a, uint32_t now_ms, device_fra
     uint32_t start; // Метка времени DWT (в тактах CPU) начала чтения кадра по SPI
     int timed_out; // Флаг истечения максимального времени ожидания готовности кадра
     unsigned count; // Количество активных опрашиваемых каналов из конфигурации
+    uint8_t selected;
     uint8_t expected; // Ожидаемая битовая маска, при которой готовы все выбранные каналы
 
     // Выходим, если не переданы структуры, не задан callback таймера или нулевой таймаут
@@ -17,10 +18,13 @@ int device_acquisition_poll(device_acquisition_t *a, uint32_t now_ms, device_fra
     // Проверяем, что число каналов входит в допустимый диапазон 1..DEVICE_MAX_CHANNELS
     if (!count || count > DEVICE_MAX_CHANNELS) return 0;
     // Формируем маску из count младших единиц (например, для 4 каналов: (1<<4)-1 = 0x0F)
-    expected = (uint8_t)((1u << count) - 1u);
+    selected = a->settings.channel_mask ? a->settings.channel_mask : (uint8_t)((1u << count) - 1u);
+    expected = 0;
 
     for (i = 0; i < count; ++i) { // Проходим по всем активным каналам для проверки их выводов DRDY
         device_channel_t *c = &a->channel[i]; // Берём указатель на структуру текущего канала i
+        if (!(selected & (1u << i))) continue;
+        if (c->enabled) expected |= (uint8_t)(1u << i);
         // Если канал включён, имеет callback опроса и линия DRDY показывает готовность
         if (c->enabled && c->ready && c->ready(c->ready_context)) {
             mask |= (uint8_t)(1u << i); // Выставляем i-й бит в текущей маске готовности
@@ -40,7 +44,8 @@ int device_acquisition_poll(device_acquisition_t *a, uint32_t now_ms, device_fra
     timed_out = (uint32_t)(now_ms - a->last_frame_ms) >= a->settings.timeout_ms;
     // Если таймаут не вышел и условие запуска (готов канал 0 либо готовы все каналы) не выполнено —
     // ждём дальше
-    if (!timed_out && (a->settings.trigger == DEVICE_TRIGGER_FIRST ? !(mask & 1u) : mask != expected)) return 0;
+    if (!timed_out && (!expected || (a->settings.trigger == DEVICE_TRIGGER_FIRST ?
+        !(mask & (expected & (uint8_t)(0u - expected))) : mask != expected))) return 0;
 
     // Фиксируем такты DWT перед стартом последовательного чтения микросхем по SPI
     start = a->ticks(a->clock_context);
@@ -71,6 +76,10 @@ int device_acquisition_poll(device_acquisition_t *a, uint32_t now_ms, device_fra
             if (out->ready_offset_ticks > f->ready_span_ticks)
                 // Обновляем максимальную ширину окна разброса готовности DRDY
                 f->ready_span_ticks = out->ready_offset_ticks;
+        }
+        if (!(selected & (1u << i))) {
+            out->status = DEVICE_STOPPED;
+            continue;
         }
         if (!c->enabled) { // Если канал не прошёл инициализацию при старте
             out->status = DEVICE_INIT_ERROR; // Записываем статус ошибки инициализации

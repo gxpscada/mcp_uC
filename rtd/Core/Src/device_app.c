@@ -78,6 +78,7 @@ void device_board_gpio_init(void)
     device_stm32_channel_t map[DEVICE_CHANNELS] = DEVICE_BOARD_CHANNELS(0);
     GPIO_InitTypeDef gpio = {0}; // Обнуляем структуру настройки периферии GPIO HAL
     unsigned i; // Счётчик цикла по физическим каналам
+    device_stm32_drdy_reset();
     DEVICE_BOARD_GPIO_CLOCK_ENABLE(); // Подаём тактирование на порты GPIO, используемые датчиками
     for (i = 0; i < DEVICE_BOARD_CHANNEL_COUNT; ++i) { // Проходим по всем физически распаянным каналам
         // Заранее выставляем высокий (неактивный) уровень на пине CS в выходном регистре ODR
@@ -88,9 +89,16 @@ void device_board_gpio_init(void)
         gpio.Speed = GPIO_SPEED_FREQ_HIGH; // Высокая скорость перезаряда фронтов для работы с SPI
         HAL_GPIO_Init(map[i].cs_port, &gpio); // Применяем конфигурацию к порту вывода CS
         gpio.Pin = map[i].drdy_pin; // Указываем пин готовности DRDY текущего канала
-        gpio.Mode = GPIO_MODE_INPUT; // Режим работы: цифровой вход
+        gpio.Mode = GPIO_MODE_IT_FALLING; // DRDY активен по спадающему фронту.
         gpio.Pull = GPIO_PULLUP; // Подтяжка к плюсу, так как активный уровень DRDY у MAX31865 — низкий
         HAL_GPIO_Init(map[i].drdy_port, &gpio); // Применяем конфигурацию к порту вывода DRDY
+        __HAL_GPIO_EXTI_CLEAR_IT(map[i].drdy_pin);
+        {
+            IRQn_Type irq = map[i].drdy_pin >= GPIO_PIN_10 ? EXTI15_10_IRQn :
+                map[i].drdy_pin >= GPIO_PIN_5 ? EXTI9_5_IRQn : EXTI4_IRQn;
+            HAL_NVIC_SetPriority(irq, 6, 0);
+            HAL_NVIC_EnableIRQ(irq);
+        }
     }
 }
 
@@ -173,6 +181,8 @@ static void acquisition_poll(uint32_t now)
         device_control.runtime_ms = 0; // Обнуляем время работы текущего сеанса
         // Передаём актуальное число активных каналов в модуль сборщика
         device_acquisition.settings.channel_count = (uint8_t)count;
+        device_acquisition.settings.channel_mask = (uint8_t)device_control.config.channel_mask;
+        device_stm32_drdy_reset();
         device_acquisition.observed_mask = 0; // Очищаем маску замеченных сигналов DRDY от прошлых запусков
         device_acquisition.sequence = 0; // Сбрасываем нумерацию кадров
         // Переводим статусы каналов в режим прогрева цифровых фильтров
@@ -181,12 +191,13 @@ static void acquisition_poll(uint32_t now)
     } else if (phase == BIAS) {
         unsigned i = channel_index++; // Берём текущий индекс канала и сдвигаем указатель на следующий
         // Переинициализируем конфигурацию датчика перед запуском
-        max31865_result_t r = max31865_init(&devices[i], &ports[i], device_stm32_transfer, DEVICE_SENSOR_WIRES, DEVICE_SENSOR_FILTER_HZ);
+        int selected = (device_control.config.channel_mask & (1u << i)) != 0;
+        max31865_result_t r = selected ? max31865_init(&devices[i], &ports[i], device_stm32_transfer, DEVICE_SENSOR_WIRES, DEVICE_SENSOR_FILTER_HZ) : MAX31865_OK;
         // Если чип ответил корректно, включаем бит Vbias в его конфигурационном регистре
-        if (r == MAX31865_OK) r = max31865_bias(&devices[i]);
+        if (selected && r == MAX31865_OK) r = max31865_bias(&devices[i]);
         device_init_status[i] = r; // Сохраняем статус инициализации канала для диагностики
         // Разрешаем опрос канала только при успешном включении Vbias
-        device_acquisition.channel[i].enabled = (uint8_t)(r == MAX31865_OK);
+        device_acquisition.channel[i].enabled = (uint8_t)(selected && r == MAX31865_OK);
         if (r != MAX31865_OK) hardware_failure(); // При ошибке обмена фиксируем аппаратный сбой
         if (channel_index == count) { // Когда прошли все выбранные активные каналы
             since = now; // Засекаем время начала выдержки установления аналогового тракта
@@ -203,8 +214,10 @@ static void acquisition_poll(uint32_t now)
         unsigned i = channel_index++; // Выбираем очередной канал
         if (device_acquisition.channel[i].enabled) { // Если канал успешно прошёл этап включения Vbias
             max31865_sample_t stale; // Временная структура для холостого вычитывания старых данных
-            // Читаем регистры АЦП, чтобы гарантированно сбросить старый активный уровень DRDY
-            max31865_result_t r = max31865_read(&devices[i], &stale);
+            // После установления Vbias очищаем старые ошибки перед каждым START.
+            max31865_result_t r = max31865_clear_faults(&devices[i]);
+            // Читаем регистры АЦП, чтобы сбросить старый активный уровень DRDY.
+            if (r == MAX31865_OK) r = max31865_read(&devices[i], &stale);
             // Если чтение прошло успешно, поднимаем бит режима непрерывных измерений (Conversion
             // Mode = Auto)
             if (r == MAX31865_OK) r = max31865_start(&devices[i]);
@@ -224,9 +237,11 @@ static void acquisition_poll(uint32_t now)
         }
     } else if (phase == RUNNING) { // Штатная фаза сбора и обработки данных
         // Проверяем готовность кадра; если новый кадр вычитан из датчиков
-        if (device_acquisition_poll(&device_acquisition, now, &device_last_frame))
+        if (device_acquisition_poll(&device_acquisition, now, &device_last_frame)) {
             // Передаём кадр в цепочку фильтрации, расчёта температуры и обновления регистров Modbus
             device_control_frame(&device_control, &device_last_frame);
+            modbus_ascii_measurement(&device_modbus);
+        }
     } else if (phase == STOPPING) { // Фаза поочерёдного отключения всех физических каналов
         unsigned i = channel_index++; // Берём индекс очередного физического канала
         // Сбрасываем биты Vbias и AUTO в датчике; при ошибке SPI фиксируем сбой

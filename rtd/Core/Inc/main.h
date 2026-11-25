@@ -59,9 +59,9 @@ void Error_Handler(void); // Глобальный прототип функци�
 /* Private defines -----------------------------------------------------------*/
 #define LED_Pin GPIO_PIN_13 // Маска пина 13 для управления индикаторным светодиодом на плате (PC13 на платах формата Black Pill)
 #define LED_GPIO_Port GPIOC // Базовый указатель на регистры порта GPIOC, к которому подключён светодиод
-#define T1_DRDY_Pin GPIO_PIN_2 // Маска пина PA2 для входа готовности данных (DRDY) первого канала (оставлена от базового шаблона CubeMX)
-#define T1_DRDY_GPIO_Port GPIOA // Порт GPIOA для линии DRDY первого канала
-#define T1_DRDY_EXTI_IRQn EXTI2_IRQn // Номер вектора внешнего прерывания линии EXTI2 в контроллере NVIC
+#define T1_DRDY_Pin GPIO_PIN_10 // DRDY первого датчика: PB10.
+#define T1_DRDY_GPIO_Port GPIOB
+#define T1_DRDY_EXTI_IRQn EXTI15_10_IRQn
 #define T1_CS_Pin GPIO_PIN_3 // Маска пина PA3 для выхода выбора микросхемы (Chip Select) первого канала
 #define T1_CS_GPIO_Port GPIOA // Порт GPIOA для линии CS первого канала
 
